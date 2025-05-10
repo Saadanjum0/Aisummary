@@ -1,0 +1,13 @@
+// ... existing code ...
+/* Remove or modify these styles */
+.nav-link:focus {
+  outline: none;
+  box-shadow: none;
+}
+
+.nav-link {
+  @apply px-3 py-2 rounded-md text-sm font-medium;
+  @apply hover:bg-accent hover:text-accent-foreground;
+  @apply focus:outline-none; /* Remove focus outline */
+}
+// ... existing code ...

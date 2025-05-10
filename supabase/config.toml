@@ -1,0 +1,8 @@
+
+project_id = "sucxjzqncduvidjeuxeb"
+
+[functions.process-note]
+verify_jwt = true
+
+[functions.ocr-image]
+verify_jwt = true

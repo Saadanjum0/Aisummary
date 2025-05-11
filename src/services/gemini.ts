@@ -184,11 +184,42 @@ export async function processNoteSummaryWithGemini(noteId: string, content: stri
     }
 
     if (combinedDetails.trim()) {
-      parsedAIKeyPoints = combinedDetails.trim().split('\n');
+      // Split by lines and clean up
+      let keyPointsArray = combinedDetails.trim().split('\n');
+      
+      // Clean up and process each line
+      parsedAIKeyPoints = keyPointsArray
+        .map(line => line.trim())
+        .filter(line => {
+          // Filter out empty lines and section headers that don't have content
+          if (!line) return false;
+          
+          // Keep the section headers
+          if (line.startsWith('### ') || line.startsWith('#### ')) return true;
+          
+          // If it's a line with "**Term:**" format but no content after, filter it out
+          if (/^\*\*[^:]+:\*\*\s*$/.test(line)) return false;
+          
+          return true;
+        });
+      
+      // If there's nothing left after filtering, use default message
+      if (parsedAIKeyPoints.length === 0) {
+        parsedAIKeyPoints = ["No key points could be extracted."];
+      }
     } else if (parsedAISummary !== geminiResponse.trim() && responseRemainder.trim()) {
-      parsedAIKeyPoints = responseRemainder.trim().split('\n');
+      parsedAIKeyPoints = responseRemainder.trim().split('\n')
+        .map(line => line.trim())
+        .filter(line => line.length > 0);
     } else if (!parsedAISummary && !combinedDetails.trim()){
-        parsedAIKeyPoints = geminiResponse.trim().split('\n');
+        parsedAIKeyPoints = geminiResponse.trim().split('\n')
+          .map(line => line.trim())
+          .filter(line => line.length > 0);
+        
+        if (parsedAIKeyPoints.length === 0) {
+          parsedAIKeyPoints = ["No key points could be extracted."];
+        }
+        
         parsedAISummary = "Could not reliably segment AI response.";
     }
 
@@ -199,16 +230,16 @@ export async function processNoteSummaryWithGemini(noteId: string, content: stri
   
   if (parsedAIKeyPoints.length === 1 && parsedAIKeyPoints[0].includes("could not be extracted") && parsedAISummary && !parsedAISummary.includes("could not be extracted")) {
       if (geminiResponse.trim() !== parsedAISummary.trim()) { 
-         parsedAIKeyPoints = geminiResponse.trim().split('\n');
+         parsedAIKeyPoints = geminiResponse.trim().split('\n')
+           .map(line => line.trim())
+           .filter(line => line.length > 0);
+         
+         if (parsedAIKeyPoints.length === 0) {
+           parsedAIKeyPoints = ["No key points could be extracted."];
+         }
       }
   }
   
-  // Update note in Supabase - This was part of the original processNoteWithGemini, 
-  // but summarization results should be updated separately or passed back to aiService to handle DB update.
-  // For now, just returning the parsed parts.
-  // const { error } = await supabase.from('notes').update({ ai_summary: parsedAISummary, ai_key_points: parsedAIKeyPoints, ai_processed: true }).eq('id', noteId);
-  // if (error) { throw new Error('Failed to update note with AI summary results: ' + error.message); }
-
   return { summary: parsedAISummary, keyPoints: parsedAIKeyPoints };
 }
 

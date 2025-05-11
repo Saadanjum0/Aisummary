@@ -6,10 +6,11 @@ import { toast } from "sonner";
 import { useNavigate } from "react-router-dom";
 import { cn } from "@/lib/utils";
 import { createNote } from "@/services/notesService"; // Assuming this returns a Promise
-import { processNoteWithAI } from "@/services/aiService"; // Assuming this returns a Promise
+import { processNoteWithAI, registerTagsUpdateCallback } from "@/services/aiService"; // Added registerTagsUpdateCallback
 import mammoth from 'mammoth';
 import { performOCRWithGemini } from '@/services/gemini'; // Assuming this returns a Promise
 import { GlobalWorkerOptions, getDocument, PDFDocumentProxy, PDFPageProxy, TextContent } from 'pdfjs-dist'; // Typed pdfjs-dist items
+import { useQueryClient } from "@tanstack/react-query"; // Import useQueryClient
 
 // Import useAuth to check authentication state
 import { useAuth } from "@/context/AuthContext";
@@ -30,6 +31,14 @@ const ImportPage = () => {
   const [fileProgress, setFileProgress] = useState<Record<string, { status: 'pending' | 'processing' | 'completed' | 'error', message?: string }>>({});
   const navigate = useNavigate();
   const { user, loading: authLoading } = useAuth(); // Get user and auth loading state
+  const queryClient = useQueryClient(); // Add QueryClient
+
+  // Register the tags update callback
+  useEffect(() => {
+    registerTagsUpdateCallback(() => {
+      queryClient.invalidateQueries({ queryKey: ['tags'] });
+    });
+  }, [queryClient]);
 
   // Redirect if user is not authenticated (e.g., session expired during a long stay on this page)
   useEffect(() => {
@@ -234,6 +243,10 @@ const ImportPage = () => {
     }
     
     setIsProcessing(false);
+
+    // Invalidate tags and notes queries to ensure fresh data on dashboard
+    queryClient.invalidateQueries({ queryKey: ['tags'] });
+    queryClient.invalidateQueries({ queryKey: ['notes'] });
 
     if (allSuccessful && files.length > 0) {
       toast.success(`All ${files.length} selected files processed!`);

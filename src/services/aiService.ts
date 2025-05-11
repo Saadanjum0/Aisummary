@@ -5,6 +5,14 @@ import { processNoteSummaryWithGemini, generateTagsAndLinks } from './gemini';
 import { getNoteById, getAllNoteTitlesAndIds } from './notesService';
 import { Tag, getTags, createTag, addTagToNote } from './tagsService';
 
+// For cache invalidation
+let onTagsUpdated: (() => void) | null = null;
+
+// Register a callback to be called when tags are updated
+export function registerTagsUpdateCallback(callback: () => void) {
+  onTagsUpdated = callback;
+}
+
 // Helper function for random color - consider moving to a shared util or tagService
 const getRandomColor = () => {
   const letters = '0123456789ABCDEF';
@@ -72,6 +80,7 @@ export async function processNoteWithAI(noteId: string) {
     );
 
     let dbUpdatePayload: Partial<Note> = {};
+    let tagsWereUpdated = false;
 
     if (suggestionsResult) {
         // console.log("AI Suggestions Received:", suggestionsResult); // Remove for production
@@ -94,6 +103,7 @@ export async function processNoteWithAI(noteId: string) {
                     if (newGlobalTag) {
                         tagIdToAdd = newGlobalTag.id;
                         allGlobalTags.push(newGlobalTag); 
+                        tagsWereUpdated = true;
                     } else {
                         toast.warn(`Could not create new global tag: ${suggestedTag.name}`);
                         continue;
@@ -109,7 +119,10 @@ export async function processNoteWithAI(noteId: string) {
                 );
                 if (!noteAlreadyHasTag) {
                     const added = await addTagToNote(noteId, tagIdToAdd);
-                    if (added) newTagsAddedToNoteCount++;
+                    if (added) {
+                        newTagsAddedToNoteCount++;
+                        tagsWereUpdated = true;
+                    }
                     else toast.warn(`Could not add tag '${suggestedTag.name}' to note.`);
                 }
             }
@@ -132,6 +145,11 @@ export async function processNoteWithAI(noteId: string) {
             toast.error("Failed to save some AI suggestions."); // Keep this user-facing error
         }
         // else { toast.info("Raw AI suggestions reference saved."); } // Optional: too noisy for prod
+    }
+    
+    // Notify listeners that tags were updated
+    if (tagsWereUpdated && onTagsUpdated) {
+        onTagsUpdated();
     }
     
     if (note) return note; 

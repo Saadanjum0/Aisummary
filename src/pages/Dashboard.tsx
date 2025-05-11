@@ -2,15 +2,29 @@ import React, { useState, useEffect, useMemo } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { getNotes, getFavoriteNotes, Note, searchNotes as apiSearchNotes, getRecentlyViewedNotes, toggleFavorite as apiToggleFavorite } from '@/services/notesService';
 import { Button } from '@/components/ui/button';
-import { Plus, RefreshCw, Search, Upload, FileText, Tags as TagsIcon, DownloadCloud, Edit3, X, Brain, Menu, ArrowLeft } from 'lucide-react';
+import { Plus, RefreshCw, Search, Upload, FileText, Tags as TagsIcon, DownloadCloud, Edit3, X, Brain, Menu, ArrowLeft, Trash2, Plus as PlusIcon } from 'lucide-react';
 import { Link } from 'react-router-dom';
 import NotesList from '@/components/notes/NotesList';
 import { NoteCardProps } from '@/components/notes/NoteCard';
-import { getTags, Tag } from '@/services/tagsService';
+import { getTags, Tag, createTag, deleteTag } from '@/services/tagsService';
 import { Input } from '@/components/ui/input';
 import { Skeleton } from '@/components/ui/skeleton';
 import { cn } from '@/lib/utils';
 import { toast } from 'sonner';
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogDescription,
+  DialogFooter,
+  DialogTrigger,
+} from "@/components/ui/dialog";
+import {
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
+} from "@/components/ui/popover";
 
 // Define xxs breakpoint if not already in tailwind.config.js (optional but good for tiny screens)
 // If not defined, 'xs' is the smallest default. You can add custom breakpoints in tailwind.config.js
@@ -61,6 +75,12 @@ const Dashboard = () => {
   const [activeFilterTagIds, setActiveFilterTagIds] = useState<string[]>([]);
   const [activeDocumentTab, setActiveDocumentTab] = useState<"all" | "favorites" | "recent">("all");
   const [isSidebarOpen, setIsSidebarOpen] = useState(false); // For mobile sidebar
+  
+  // Add state for tag creation
+  const [newTagName, setNewTagName] = useState("");
+  const [newTagColor, setNewTagColor] = useState("#3B82F6");
+  const [isCreatingTag, setIsCreatingTag] = useState(false);
+  const [showNewTagForm, setShowNewTagForm] = useState(false);
 
   // --- Hooks for data fetching and debouncing (remain largely the same) ---
   useEffect(() => {
@@ -113,8 +133,8 @@ const Dashboard = () => {
   } = useQuery<Tag[]>({
     queryKey: ['tags'],
     queryFn: () => getTags(),
-    staleTime: 24 * 60 * 60 * 1000, // Tags don't change often, long stale time
-    cacheTime: 7 * 24 * 60 * 60 * 1000, // Keep tags cached for a week
+    staleTime: 5 * 60 * 1000, // Reduced from 24 hours to 5 minutes
+    cacheTime: 10 * 60 * 1000, // Reduced from 7 days to 10 minutes
   });
 
   const { 
@@ -130,11 +150,30 @@ const Dashboard = () => {
     cacheTime: 5 * 60 * 1000,
   });
 
+  // Determine if any notes are currently loading
+  const isLoadingDisplay = useMemo(() => {
+    if (activeDocumentTab === "all") {
+      return isLoadingAllNotes || isFetchingAllNotes || (debouncedSearchTerm && (isLoadingTitleContentSearch || isFetchingTitleContentSearch));
+    } else if (activeDocumentTab === "favorites") {
+      return isLoadingFavorites || isFetchingFavorites;
+    } else { // recent
+      return isLoadingRecent || isFetchingRecent;
+    }
+  }, [
+    activeDocumentTab,
+    isLoadingAllNotes, isFetchingAllNotes,
+    isLoadingFavorites, isFetchingFavorites,
+    isLoadingRecent, isFetchingRecent,
+    isLoadingTitleContentSearch, isFetchingTitleContentSearch,
+    debouncedSearchTerm
+  ]);
+
   const handleNoteDeleted = () => {
     // Invalidate relevant queries instead of refetching everything manually
     queryClient.invalidateQueries({ queryKey: ['notes'] });
     queryClient.invalidateQueries({ queryKey: ['favorite-notes'] });
     queryClient.invalidateQueries({ queryKey: ['recentlyViewedNotes'] });
+    queryClient.invalidateQueries({ queryKey: ['tags'] }); // Invalidate tags to ensure they're refreshed
     if (debouncedSearchTerm) {
          queryClient.invalidateQueries({ queryKey: ['titleContentSearchedNotes', debouncedSearchTerm] });
     }
@@ -250,74 +289,77 @@ const Dashboard = () => {
     } else { // 'all' tab
         baseNotes = allNotes;
     }
-
+    
+    // Apply search filter first if there's a search term
     let filteredNotes = baseNotes;
-
-    // Apply search filter if active
-    if (debouncedSearchTerm) {
-        const lowerSearchTerm = debouncedSearchTerm.toLowerCase();
-        filteredNotes = filteredNotes.filter(note =>
-            note.title?.toLowerCase().includes(lowerSearchTerm) ||
-            note.content?.toLowerCase().includes(lowerSearchTerm) ||
-            note.ai_summary?.toLowerCase().includes(lowerSearchTerm) ||
-            (note.tags && (note.tags as Tag[]).some(tag => tag.name?.toLowerCase().includes(lowerSearchTerm))) ||
-            (note.ai_summary_keywords && note.ai_summary_keywords.some(kw => kw?.toLowerCase().includes(lowerSearchTerm)))
-        );
-    }
-
-    // Apply tag filters if active
-    if (activeFilterTagIds.length > 0) {
-      filteredNotes = filteredNotes.filter(note => {
-        if (!note) return false; // Skip potentially null notes
-        return activeFilterTagIds.some(filterTagId => {
-          // Find the full tag object for the filter ID to get its name
-          const activeGlobalTagObj = tags.find(t => t.id === filterTagId);
-          if (!activeGlobalTagObj) return false; // Should not happen if tags data is correct
-          const filterTagNameLower = activeGlobalTagObj.name.toLowerCase();
-
-          // Check if the note has the tag by ID or Name (formal tags)
+    if (debouncedSearchTerm.trim()) {
+      const searchTermLower = debouncedSearchTerm.toLowerCase();
+      
+      // Use the API search results if they exist
+      if (titleContentSearchedNotes && activeDocumentTab === "all") {
+        filteredNotes = titleContentSearchedNotes;
+      } else {
+        // Otherwise perform client-side search including tags
+        filteredNotes = filteredNotes.filter(note => {
+          // 1. Check for match in title or content
+          const titleMatch = note.title?.toLowerCase().includes(searchTermLower);
+          const contentMatch = note.content?.toLowerCase().includes(searchTermLower);
+          const summaryMatch = note.ai_summary?.toLowerCase().includes(searchTermLower);
+          
+          // 2. Check for match in tags
+          let tagMatch = false;
           if (note.tags && Array.isArray(note.tags)) {
-            const hasFormalTag = note.tags.some(tag => 
-              (typeof tag === 'string' && tag === filterTagId) || // Check by ID string
-              (typeof tag === 'string' && tag.toLowerCase() === filterTagNameLower) || // Check by Name string (fallback)
-              (typeof tag === 'object' && (tag as Tag).id === filterTagId) // Check by ID object
-            );
-            if (hasFormalTag) return true;
+            tagMatch = note.tags.some(tag => {
+              if (typeof tag === 'string') {
+                return tag.toLowerCase().includes(searchTermLower);
+              } else if (typeof tag === 'object' && tag && tag.name) {
+                return tag.name.toLowerCase().includes(searchTermLower);
+              }
+              return false;
+            });
           }
-           // Check if the filter tag name exists in AI keywords
+          
+          // 3. Check for match in keywords
+          let keywordMatch = false;
           if (note.ai_summary_keywords && Array.isArray(note.ai_summary_keywords)) {
-            if (note.ai_summary_keywords.some(keyword => keyword?.toLowerCase() === filterTagNameLower)) {
-              return true;
-            }
+            keywordMatch = note.ai_summary_keywords.some(
+              keyword => keyword?.toLowerCase().includes(searchTermLower)
+            );
           }
-          return false; // Note doesn't match this filter tag
+          
+          return titleMatch || contentMatch || summaryMatch || tagMatch || keywordMatch;
         });
-      });
+      }
     }
 
-    // Sort recent notes by view time (already handled by API/query, but ensuring here)
-     if (activeDocumentTab === "recent") {
-         filteredNotes.sort((a,b) => new Date(b.last_viewed_at || 0).getTime() - new Date(a.last_viewed_at || 0).getTime());
-     }
-
-
-    // Transform the final list of filtered notes into NoteCardProps
+    // Apply tag filtering if there are active tag filters
+    if (activeFilterTagIds.length > 0 && !debouncedSearchTerm) {
+        // Only apply tag filtering when not searching by text
+        filteredNotes = filteredNotes.filter(note => {
+            const noteTags = note.tags || [];
+            // Check if the note has any of the active filter tags
+            return activeFilterTagIds.some(filterTagId => 
+                noteTags.some((tag: any) => 
+                    // Handle both string IDs and tag objects
+                    (typeof tag === 'string' && tag === filterTagId) || 
+                    (typeof tag === 'object' && tag.id === filterTagId)
+                )
+            );
+        });
+    }
+    
+    // Transform notes to NoteCardProps format
     return filteredNotes.map(transformNoteToCardProps);
-
   }, [
-    activeDocumentTab, allNotes, favoriteNotes, recentlyViewedNotes, tags, // Dependencies for data sources
-    debouncedSearchTerm, activeFilterTagIds, // Dependencies for filters
-    transformNoteToCardProps // Dependency for transformation function
+    activeDocumentTab, 
+    allNotes, 
+    favoriteNotes, 
+    recentlyViewedNotes, 
+    titleContentSearchedNotes, 
+    activeFilterTagIds, 
+    debouncedSearchTerm,
+    transformNoteToCardProps
   ]);
-
-  // Decide what loading state to show based on active tab/search
-  const isLoadingDisplay = isLoadingAllNotes || 
-                           (activeDocumentTab === 'favorites' && (isLoadingFavorites || isFetchingFavorites)) ||
-                           (activeDocumentTab === 'recent' && (isLoadingRecent || isFetchingRecent)) ||
-                           (!!debouncedSearchTerm && (isLoadingTitleContentSearch || isFetchingTitleContentSearch)) ||
-                           isLoadingTags ||
-                           isFetchingAllNotes; // Consider fetching state for 'all' tab
-
 
   const handleRefresh = () => {
     // Invalidate all relevant queries to refetch fresh data
@@ -335,6 +377,80 @@ const Dashboard = () => {
     // Placeholder for actual recent activity data if you implement it
   const actualRecentActivity: { icon: React.ElementType; action: string; item?: string; subItems?: string[]; time: string; }[] = [];
 
+  // Custom EmptyState component to show when no notes are available
+  const EmptyState = () => (
+    <div className="flex flex-col items-center justify-center py-12 px-4 text-center">
+      <div className="rounded-full bg-gray-100 p-3 mb-4">
+        <FileText className="h-8 w-8 text-gray-400" />
+      </div>
+      <h3 className="text-lg font-medium text-gray-900 mb-1">No documents yet</h3>
+      <p className="text-sm text-gray-500 mb-6 max-w-md">
+        {activeDocumentTab === "all" 
+          ? "Get started by importing a document from your files."
+          : activeDocumentTab === "favorites" 
+            ? "You haven't favorited any documents yet. Star documents to add them here."
+            : "Recently viewed documents will appear here as you use the app."}
+      </p>
+      <div className="flex flex-wrap gap-2 justify-center">
+        <Button asChild size="sm">
+          <Link to="/import">
+            <Upload className="h-4 w-4 mr-2" />
+            Import document
+          </Link>
+        </Button>
+      </div>
+    </div>
+  );
+
+  // Effect to refresh tags when notes change
+  useEffect(() => {
+    if (allNotes.length > 0) {
+      // Invalidate tags query to ensure fresh data
+      queryClient.invalidateQueries({ queryKey: ['tags'] });
+    }
+  }, [allNotes.length, queryClient]);
+
+  // Add function to handle tag creation
+  const handleCreateTag = async () => {
+    if (!newTagName.trim()) {
+      toast.error("Tag name cannot be empty");
+      return;
+    }
+
+    setIsCreatingTag(true);
+    try {
+      await createTag({
+        name: newTagName,
+        color: newTagColor
+      });
+      
+      // Reset form
+      setNewTagName("");
+      setNewTagColor("#3B82F6");
+      setShowNewTagForm(false);
+      
+      // Refresh tags
+      queryClient.invalidateQueries({ queryKey: ['tags'] });
+      toast.success(`Tag "${newTagName}" created`);
+    } catch (error) {
+      console.error("Error creating tag:", error);
+      toast.error("Failed to create tag");
+    } finally {
+      setIsCreatingTag(false);
+    }
+  };
+
+  // Add function to handle tag deletion
+  const handleDeleteTag = async (tagId: string, tagName: string) => {
+    try {
+      await deleteTag(tagId);
+      queryClient.invalidateQueries({ queryKey: ['tags'] });
+      toast.success(`Tag "${tagName}" deleted`);
+    } catch (error) {
+      console.error("Error deleting tag:", error);
+      toast.error("Failed to delete tag");
+    }
+  };
 
   return (
     <div className="flex flex-col h-screen bg-gray-50 dark:bg-gray-900 overflow-x-hidden"> {/* Prevent horizontal scroll on the main container */}
@@ -366,22 +482,8 @@ const Dashboard = () => {
 
         {/* Right side: Search, Import, Refresh */}
         <div className="flex items-center gap-2 sm:gap-3 min-w-0 flex-grow justify-end"> {/* Use gap instead of space-x, min-w-0, flex-grow */}
-          {/* Search Input Container - Allows input to take available space */}
-          <div className="relative flex-grow min-w-[100px] max-w-sm"> {/* flex-grow allows it to grow, min-w ensures a minimum, max-w limits large size */}
-            <Search className="absolute left-2 sm:left-3 top-1/2 transform -translate-y-1/2 h-3.5 w-3.5 sm:h-4 w-4 text-gray-400 pointer-events-none" /> {/* Added pointer-events-none */}
-            <Input 
-              placeholder="Search documents..." // More descriptive placeholder
-              className="pl-7 sm:pl-9 pr-7 sm:pr-9 py-1.5 sm:py-2 w-full text-xs sm:text-sm rounded-md border border-gray-300 focus:border-purple-500 focus:ring-purple-500 min-w-0" // Full width within container, improved focus style, added min-w-0
-              value={searchTerm}
-              onChange={(e) => setSearchTerm(e.target.value)}
-              aria-label="Search documents"
-            />
-            {searchTerm && (
-                <Button variant="ghost" size="icon" className="absolute right-0 top-1/2 transform -translate-y-1/2 h-7 w-7 sm:h-8 sm:w-8" onClick={() => setSearchTerm("")} aria-label="Clear search">
-                    <X className="h-3 w-3 sm:h-3.5 w-3.5 text-gray-400 hover:text-gray-600"/>
-          </Button>
-            )}
-          </div>
+          {/* Remove Search Input Container */}
+          
           {/* Import Button */}
           <Link to="/import" className="flex-shrink-0"> {/* Prevent import button from shrinking */}
             <Button variant="outline" size="sm" className="text-xs px-2 py-1 sm:text-sm sm:px-3 sm:py-1.5 whitespace-nowrap flex items-center"> {/* Adjusted padding, added flex items-center for icon+text alignment */}
@@ -424,53 +526,152 @@ const Dashboard = () => {
           <div className="space-y-3">
             <div className="flex justify-between items-center mb-1">
               <h2 className="text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wider">TAG EXPLORER</h2>
-              {activeFilterTagIds.length > 0 && (
+              <div className="flex items-center gap-1">
+                {activeFilterTagIds.length > 0 && (
                   <Button variant="link" className="text-xs text-purple-600 hover:text-purple-800 p-0 h-auto flex items-center" onClick={clearTagFilters}>
-                      <X className="h-3 w-3 mr-0.5" /> Clear
+                    <X className="h-3 w-3 mr-0.5" /> Clear
                   </Button>
-              )}
+                )}
+                <Button 
+                  variant="ghost" 
+                  size="icon" 
+                  className="h-6 w-6 text-purple-600"
+                  onClick={() => setShowNewTagForm(true)}
+                >
+                  <PlusIcon className="h-4 w-4" />
+                </Button>
+              </div>
             </div>
-            <p className="text-xs text-gray-500 dark:text-gray-400">Filter by tags</p> {/* Changed text */}
+            <p className="text-xs text-gray-500 dark:text-gray-400">Filter by tags</p>
+            
+            {/* Tag Creation Dialog */}
+            <Dialog open={showNewTagForm} onOpenChange={setShowNewTagForm}>
+              <DialogContent className="sm:max-w-[425px]">
+                <DialogHeader>
+                  <DialogTitle>Create New Tag</DialogTitle>
+                  <DialogDescription>
+                    Add a new tag to organize your documents
+                  </DialogDescription>
+                </DialogHeader>
+                <div className="grid gap-4 py-4">
+                  <div className="grid grid-cols-4 items-center gap-4">
+                    <label htmlFor="name" className="text-right text-sm font-medium">
+                      Name
+                    </label>
+                    <Input
+                      id="name"
+                      value={newTagName}
+                      onChange={(e) => setNewTagName(e.target.value)}
+                      className="col-span-3"
+                      placeholder="Enter tag name"
+                    />
+                  </div>
+                  <div className="grid grid-cols-4 items-center gap-4">
+                    <label className="text-right text-sm font-medium">
+                      Color
+                    </label>
+                    <div className="col-span-3 flex flex-wrap gap-2">
+                      {['#3B82F6', '#EF4444', '#10B981', '#F59E0B', '#8B5CF6', '#EC4899', '#6366F1', '#6B7280'].map(color => (
+                        <div
+                          key={color}
+                          className={`h-8 w-8 rounded-full cursor-pointer border-2 ${
+                            newTagColor === color ? 'border-black dark:border-white' : 'border-transparent'
+                          }`}
+                          style={{ backgroundColor: color }}
+                          onClick={() => setNewTagColor(color)}
+                        />
+                      ))}
+                    </div>
+                  </div>
+                </div>
+                <DialogFooter>
+                  <Button 
+                    type="submit" 
+                    onClick={handleCreateTag}
+                    disabled={isCreatingTag || !newTagName.trim()}
+                  >
+                    {isCreatingTag ? (
+                      <><RefreshCw className="mr-2 h-4 w-4 animate-spin" /> Creating...</>
+                    ) : 'Create Tag'}
+                  </Button>
+                </DialogFooter>
+              </DialogContent>
+            </Dialog>
+            
             {isLoadingTags ? (
               <div className="flex flex-wrap gap-1.5 sm:gap-2">
-                {[...Array(8)].map((_, i) => <Skeleton key={i} className="h-6 w-16 rounded-full bg-gray-200 dark:bg-gray-700" />)} {/* Skeleton for tags */}
+                {[...Array(8)].map((_, i) => <Skeleton key={i} className="h-6 w-16 rounded-full bg-gray-200 dark:bg-gray-700" />)}
               </div>
             ) : tags.length > 0 ? (
-              <div className="flex flex-wrap gap-1.5 sm:gap-2"> {/* Smaller gap for mobile */}
-                {tags.slice(0, 20).map(tag => { // Limit number of tags shown
+              <div className="flex flex-wrap gap-1.5 sm:gap-2">
+                {tags.slice(0, 20).map(tag => {
                   const isActive = activeFilterTagIds.includes(tag.id);
-                  let bgColor = tag.color || '#E9D5FF'; // Default purple-ish
-                  if (isActive) bgColor = '#BEF264'; // Active lime-ish
+                  let bgColor = tag.color || '#E9D5FF';
                   const textColor = getContrastingTextColor(bgColor);
                   return (
-                    <button 
-                      key={tag.id} 
-                      onClick={() => handleTagFilterClick(tag.id)}
-                      title={`Filter by tag: ${tag.name}`}
-                      className={cn(
-                        "px-2 py-0.5 sm:px-2.5 sm:py-1 text-xs font-medium rounded-full cursor-pointer transition-all duration-150 ease-in-out whitespace-nowrap", // Added whitespace-nowrap
-                        "focus:outline-none focus:ring-2 focus:ring-offset-1",
-                        isActive ? 'ring-purple-600 shadow-md' : 'hover:opacity-80 hover:shadow-sm'
-                      )}
-                      style={{ backgroundColor: bgColor, color: textColor, borderColor: isActive ? '#A78BFA' : 'transparent' }}
-                    >
-                      {tag.name}
-                    </button>
+                    <Popover key={tag.id}>
+                      <PopoverTrigger asChild>
+                        <button 
+                          onClick={() => handleTagFilterClick(tag.id)}
+                          title={`Filter by tag: ${tag.name}`}
+                          className={cn(
+                            "px-2 py-0.5 sm:px-2.5 sm:py-1 text-xs font-medium rounded-full cursor-pointer transition-all duration-150 ease-in-out whitespace-nowrap",
+                            "focus:outline-none group relative",
+                            isActive 
+                              ? 'border-2 border-white scale-110 z-10 shadow-lg' 
+                              : 'border border-transparent hover:opacity-80 hover:shadow-sm'
+                          )}
+                          style={{ 
+                            backgroundColor: bgColor, 
+                            color: textColor,
+                            outline: isActive ? '2px solid rgba(0,0,0,0.2)' : 'none',
+                            boxShadow: isActive ? '0 4px 6px rgba(0,0,0,0.2)' : ''
+                          }}
+                        >
+                          {isActive && <span className="mr-1">✓</span>}{tag.name}
+                        </button>
+                      </PopoverTrigger>
+                      <PopoverContent className="w-auto p-0" align="center">
+                        <Button
+                          variant="destructive"
+                          size="sm"
+                          className="w-full"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            handleDeleteTag(tag.id, tag.name);
+                          }}
+                        >
+                          <Trash2 className="mr-2 h-4 w-4" />
+                          Delete Tag
+                        </Button>
+                      </PopoverContent>
+                    </Popover>
                   );
                 })}
-                 {tags.length > 20 && ( // Add a button if there are more tags
-                     <button
-                       onClick={() => { /* Add logic to show all tags, maybe a modal */ toast.info("Showing only the first 20 tags. Future feature: See all tags."); }}
-                       className="px-2 py-0.5 sm:px-2.5 sm:py-1 text-xs font-medium rounded-full cursor-pointer text-gray-600 dark:text-gray-200 bg-gray-200 dark:bg-gray-700 hover:bg-gray-300 dark:hover:bg-gray-600"
-                     >
-                        +{tags.length - 20} more
-                     </button>
-                 )}
+                {tags.length > 20 && (
+                  <button
+                    onClick={() => toast.info("Showing only the first 20 tags. Future feature: See all tags.")}
+                    className="px-2 py-0.5 sm:px-2.5 sm:py-1 text-xs font-medium rounded-full cursor-pointer text-gray-600 dark:text-gray-200 bg-gray-200 dark:bg-gray-700 hover:bg-gray-300 dark:hover:bg-gray-600"
+                  >
+                     +{tags.length - 20} more
+                  </button>
+                )}
               </div>
             ) : (
-              <p className="text-xs text-gray-400 italic">No tags found.</p>
+              <div className="flex flex-col space-y-3">
+                <p className="text-xs text-gray-400 italic">No tags found.</p>
+                <Button 
+                  variant="outline" 
+                  size="sm" 
+                  className="text-xs"
+                  onClick={() => setShowNewTagForm(true)}
+                >
+                  <PlusIcon className="mr-1 h-3 w-3" />
+                  Create your first tag
+                </Button>
+              </div>
             )}
-      </div>
+          </div>
 
           {/* Recent Activity - Added conditional rendering based on actual data */}
           {actualRecentActivity.length > 0 && (
@@ -567,40 +768,23 @@ const Dashboard = () => {
       )}
 
           {!isLoadingDisplay && displayedNotes.length === 0 && (
-            <div className="text-center py-10 sm:py-16 px-4"> {/* Added padding */}
-              <FileText className="h-10 w-10 sm:h-12 w-12 mx-auto text-gray-400 mb-3 sm:mb-4" />
-              <h3 className="text-base sm:text-lg font-semibold text-gray-700 mb-1 sm:mb-2">
-                  {debouncedSearchTerm 
-                      ? `No documents matching "${debouncedSearchTerm}"` // Improved message
-                      : (activeDocumentTab === 'favorites' 
-                          ? 'No favorite documents yet'
-                          : (activeDocumentTab === 'recent'
-                              ? 'No recently viewed documents'
-                              : (activeFilterTagIds.length > 0 
-                                  ? `No documents match the selected tag${activeFilterTagIds.length > 1 ? 's' : ''}` // Improved tag message
-                                  : "No documents yet")
-                            )
-                        )}
-              </h3>
-              <p className="text-xs sm:text-sm text-gray-500">
-                  {debouncedSearchTerm 
-                      ? "Try a different search term."
-                      : (activeFilterTagIds.length > 0 
-                          ? "Adjust your tag filters or clear them."
-                          : "Get started by importing your first document.")}
-              </p>
-              {(!debouncedSearchTerm && activeFilterTagIds.length === 0 && activeDocumentTab === 'all') && ( // Show import button only on 'All' tab if empty and not filtering/searching
-                <Button asChild className="mt-4 sm:mt-6 bg-purple-600 hover:bg-purple-700 text-white text-xs sm:text-sm px-3 py-1.5 sm:px-4 sm:py-2 rounded-md"> {/* Added rounded-md */}
-                  <Link to="/import">
-                    <Upload className="mr-1.5 h-3.5 w-3.5 sm:h-4 w-4" /> Import Document
-                  </Link>
-              </Button>
-              )}
-            </div>
+            <EmptyState />
           )}
 
           {!isLoadingDisplay && displayedNotes.length > 0 && (
-              <NotesList notes={displayedNotes} /> 
+              <NotesList 
+            notes={displayedNotes} 
+            isLoading={isLoadingAllNotes || isLoadingFavorites || isLoadingTitleContentSearch || isLoadingRecent}
+            emptyMessage="No documents found"
+            emptyAction={
+              <Link to="/notes/create">
+                <Button>
+                  <Plus className="h-4 w-4 mr-2" />
+                  Create Document
+                </Button>
+              </Link>
+            }
+          /> 
           )}
         </main>
       </div>

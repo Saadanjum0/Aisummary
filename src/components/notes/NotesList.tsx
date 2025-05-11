@@ -36,11 +36,29 @@ const NotesList = ({
     let result = [...initialNotes];
     
     if (searchTerm) {
+      const searchTermLower = searchTerm.toLowerCase();
       result = result.filter(
-        (note) =>
-          note.title.toLowerCase().includes(searchTerm.toLowerCase()) ||
-          (note.content && note.content.toLowerCase().includes(searchTerm.toLowerCase())) ||
-          (note.summary && note.summary.toLowerCase().includes(searchTerm.toLowerCase()))
+        (note) => {
+          // Check title, content, and summary
+          const titleMatch = note.title.toLowerCase().includes(searchTermLower);
+          const contentMatch = note.content && note.content.toLowerCase().includes(searchTermLower);
+          const summaryMatch = note.summary && note.summary.toLowerCase().includes(searchTermLower);
+          
+          // Check tags
+          let tagMatch = false;
+          if (note.tags && Array.isArray(note.tags)) {
+            tagMatch = note.tags.some(tag => {
+              if (typeof tag === 'string') {
+                return tag.toLowerCase().includes(searchTermLower);
+              } else if (typeof tag === 'object' && tag && tag.name) {
+                return tag.name.toLowerCase().includes(searchTermLower);
+              }
+              return false;
+            });
+          }
+          
+          return titleMatch || contentMatch || summaryMatch || tagMatch;
+        }
       );
     }
     
@@ -78,7 +96,7 @@ const NotesList = ({
           <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400 h-4 w-4" />
           <Input
             type="text"
-            placeholder="Search notes..."
+            placeholder="Search by title, content, or tags..."
             value={searchTerm}
             onChange={(e) => setSearchTerm(e.target.value)}
             className="pl-10 glass-input rounded-full"
@@ -149,9 +167,12 @@ const NotesList = ({
           </p>
         </div>
       ) : filteredNotes.length === 0 ? (
-        <div className="glass-card text-center py-12">
-          <p className="text-lg font-medium text-muted-foreground">
+        <div className="glass-card text-center py-12 bg-background dark:bg-gray-800/50 backdrop-blur-lg border border-border/50 rounded-lg shadow-sm">
+          <p className="text-lg font-medium text-muted-foreground mb-2">
             {emptyMessage}
+          </p>
+          <p className="text-sm text-muted-foreground/80 mb-6">
+            Start by adding your first document
           </p>
           {emptyAction && (
             <div className="mt-4">{emptyAction}</div>

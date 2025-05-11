@@ -3,6 +3,7 @@ import { getNoteTagIds } from './tagsService';
 import { toast } from 'sonner';
 import { getTags as getAllGlobalTags, Tag } from './tagsService';
 import type { FlashcardData } from './gemini'; // Import type if defined in gemini.ts
+import { queryClient } from '@/lib/react-query';
 
 export interface AISuggestedTag {
   name: string;
@@ -310,7 +311,46 @@ export async function toggleArchive(id: string, currentValue: boolean) {
 export async function deleteNote(id: string): Promise<boolean> {
   console.log(`[notesService] Attempting to delete note_tags for note ID: ${id}`);
   try {
-    // Step 1: Delete associations from note_tags table
+    // Step 1: Find tags associated with this note
+    const { data: noteTags, error: getTagsError } = await supabase
+      .from('note_tags')
+      .select('tag_id')
+      .eq('note_id', id);
+
+    if (getTagsError) {
+      console.error(`[notesService] Error fetching tag associations for note ${id}:`, getTagsError);
+      throw getTagsError;
+    }
+
+    // Get tag IDs associated with this note
+    const tagIds = noteTags?.map(nt => nt.tag_id) || [];
+    console.log(`[notesService] Found ${tagIds.length} tags associated with note ${id}:`, tagIds);
+
+    // Step 2: Find tags that are only used by this note
+    const uniqueTagIds: string[] = [];
+    
+    // Process each tag, checking if it's only used by this note
+    for (const tagId of tagIds) {
+      // Get count of notes using this tag
+      const { count, error: countError } = await supabase
+        .from('note_tags')
+        .select('*', { count: 'exact', head: true })
+        .eq('tag_id', tagId);
+
+      if (countError) {
+        console.error(`[notesService] Error checking usage count for tag ${tagId}:`, countError);
+        continue;
+      }
+
+      // If tag is only used once (which must be by this note), add to uniqueTagIds
+      if (count === 1) {
+        uniqueTagIds.push(tagId);
+      }
+    }
+
+    console.log(`[notesService] Found ${uniqueTagIds.length} unique tags to delete:`, uniqueTagIds);
+
+    // Step 3: Delete associations from note_tags table
     const { data: deletedNoteTags, error: noteTagsError } = await supabase
       .from('note_tags')
       .delete()
@@ -324,7 +364,7 @@ export async function deleteNote(id: string): Promise<boolean> {
     }
     console.log(`[notesService] Successfully targeted/deleted ${deletedNoteTags?.length || 0} associations for note ${id} from note_tags. Response:`, deletedNoteTags);
 
-    // Step 2: Delete the note itself from the notes table
+    // Step 4: Delete the note itself from the notes table
     console.log(`[notesService] Attempting to delete note ${id} from notes table.`);
     const { data: deletedNote, error: noteError } = await supabase
       .from('notes')
@@ -339,7 +379,25 @@ export async function deleteNote(id: string): Promise<boolean> {
     }
     console.log(`[notesService] Successfully deleted note ${id} from notes. Response:`, deletedNote);
 
-    toast.success("Note and its tag associations deleted successfully.");
+    // Step 5: Delete unique tags (tags that were only used by this note)
+    if (uniqueTagIds.length > 0) {
+      const { error: deleteTagsError } = await supabase
+        .from('tags')
+        .delete()
+        .in('id', uniqueTagIds);
+
+      if (deleteTagsError) {
+        console.error(`[notesService] Error deleting unique tags:`, deleteTagsError);
+        toast.warning("Note deleted but failed to remove some unique tags.");
+      } else {
+        console.log(`[notesService] Successfully deleted ${uniqueTagIds.length} unique tags.`);
+        toast.success(`Note deleted along with ${uniqueTagIds.length} unique tags.`);
+        return true;
+      }
+    } else {
+      toast.success("Note and its tag associations deleted successfully.");
+    }
+
     return true;
   } catch (error: any) {
     console.error(`[notesService] Critical error in deleteNote function for note ${id}:`, error);

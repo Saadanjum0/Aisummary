@@ -28,6 +28,7 @@ import {
   X as XIcon,
   Trash2 as TrashIcon
 } from "lucide-react";
+import SummaryViewer from '@/components/notes/SummaryViewer';
 import { getNoteById, updateNote, deleteNote as apiDeleteNote, Note, AISuggestedTag, AISuggestedLink } from "@/services/notesService";
 import { getTags, Tag, addTagToNote as apiAddTagToNote, createTag as apiCreateTag, removeTagFromNote as apiRemoveTagFromNote } from "@/services/tagsService";
 import { processNoteWithAI } from "@/services/aiService";
@@ -491,6 +492,10 @@ const NoteDetailPage = () => {
     setIsSuggestionModalOpen(false);
   };
 
+  const handleEdit = () => {
+    navigate(`/notes/edit/${id}`);
+  };
+
   if (isLoading || isLoadingAllTags || !note) {
     return (
       <div className="flex flex-col h-screen">
@@ -599,7 +604,7 @@ const NoteDetailPage = () => {
                     </div>
                   </div>
                 </CardHeader>
-                <CardContent className="p-6 space-y-2 text-gray-700 leading-relaxed text-sm">
+                <CardContent className="p-6">
                   {isEditingSummary ? (
                     <div className="space-y-3">
                       <Textarea
@@ -614,21 +619,14 @@ const NoteDetailPage = () => {
                         <Button onClick={handleSaveSummary} disabled={isSavingSummary}>
                           {isSavingSummary ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
                           Save Summary
-        </Button>
+                        </Button>
                       </div>
-      </div>
+                    </div>
                   ) : (
-                    <> 
-                      {note.ai_summary ? renderFormattedText(note.ai_summary, 'summary') : <p className="italic text-gray-500">No AI summary overview available.</p>}
-                      
-                      <div className="mt-4 pt-4 border-t">
-                        <h4 className="text-md font-semibold text-gray-800 mb-2">Key Concepts & Details</h4>
-                        {(note.ai_key_points && (note.ai_key_points as string[]).length > 0) ? 
-                          renderFormattedText(note.ai_key_points as string[], 'keypoints') :                    
-                          <p className="italic text-gray-500">No key concepts or details extracted.</p>
-                        }
-                      </div>
-                    </>
+                    <SummaryViewer 
+                      summary={note.ai_summary || 'No AI summary overview available.'}
+                      keyPoints={note.ai_key_points as string[] || []}
+                    />
                   )}
                 </CardContent>
                 {!isEditingSummary && note.ai_processed && (
@@ -677,9 +675,14 @@ const NoteDetailPage = () => {
                         <CardTitle className="text-xl font-semibold text-gray-800">Flashcards ({flashcards.length})</CardTitle>
                         <div className="flex items-center space-x-2">
                             {flashcards.length > 0 && (
-                                <Button onClick={handleDownloadFlashcardsPDF} variant="outline" size="sm" className="text-xs">
-                                    <Download className="mr-1.5 h-3.5 w-3.5" /> Export as PDF
-                                </Button>
+                                <>
+                                    <Button onClick={handleExportFlashcardsForAnki} variant="outline" size="sm" className="text-xs">
+                                        <FileTextIcon className="mr-1.5 h-3.5 w-3.5" /> Export for Anki
+                                    </Button>
+                                    <Button onClick={handleDownloadFlashcardsPDF} variant="outline" size="sm" className="text-xs">
+                                        <Download className="mr-1.5 h-3.5 w-3.5" /> Export as PDF
+                                    </Button>
+                                </>
                             )}
                         </div>
                     </div>
@@ -755,17 +758,6 @@ const NoteDetailPage = () => {
                     </div>
                 </div>
           <div className="flex items-center gap-2 flex-wrap mt-2 sm:mt-0">
-                    <Button variant="outline" size="sm" className="text-sm">
-                        <Download className="mr-2 h-4 w-4" /> Export
-                    </Button>
-                    <Button variant="outline" size="sm" className="text-sm">
-                        <ExternalLink className="mr-2 h-4 w-4" /> Share
-                    </Button>
-                    <Link to={`/notes/edit/${note.id}`}>
-                        <Button variant='default' size="sm" className="text-sm bg-purple-600 hover:bg-purple-700">
-                            <Edit className="mr-2 h-4 w-4" /> Edit
-                        </Button>
-                    </Link>
                     <Button variant="outline" size="sm" className="text-sm" onClick={handleDeleteNote} disabled={isDeleting}> 
                         {isDeleting ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <TrashIcon className="mr-2 h-4 w-4 text-red-500" />} 
                         Delete

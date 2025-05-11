@@ -316,7 +316,7 @@ const NoteDetailPage = () => {
     const success = await apiDeleteNote(note.id);
     if (success) {
       toast.success("Note deleted successfully.");
-      navigate("/");
+      navigate("/app");
     } else {
       toast.error("Failed to delete note.");
     }

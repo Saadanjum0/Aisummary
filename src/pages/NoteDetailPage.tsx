@@ -819,24 +819,6 @@ const NoteDetailPage = () => {
                         ) : (
                             <p className="text-xs text-gray-400 italic">No tags added yet. AI will attempt to add tags during processing.</p>
                         )}
-                        {documentTags.length === 0 && (
-                            <div className="flex items-center gap-2 pt-2">
-                                <Input 
-                                    placeholder="Add or create tag..." 
-                                    className="h-8 text-xs flex-grow"
-                                    value={newTag}
-                                    onChange={(e) => setNewTag(e.target.value)}
-                                    onKeyPress={(e) => {
-                                        if (e.key === 'Enter' && newTag.trim()) {
-                                            handleAddTag(newTag.trim());
-                                        }
-                                    }} 
-                                />
-                                <Button variant="outline" size="icon" className="h-8 w-8 flex-shrink-0" onClick={() => newTag.trim() && handleAddTag(newTag.trim())} disabled={isAddingTag}>
-                                    {isAddingTag ? <Loader2 className="h-4 w-4 animate-spin"/> : <PlusCircle className="h-4 w-4" />}
-                  </Button>
-                </div>
-              )}
                     </div>
 
                     {note.ai_suggested_links && note.ai_suggested_links.length > 0 && (

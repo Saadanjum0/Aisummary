@@ -1,4 +1,3 @@
-
 import { useState } from 'react';
 import { Link } from 'react-router-dom';
 import { Button } from '@/components/ui/button';
@@ -16,6 +15,13 @@ const Register = () => {
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     await signUp(email, password, fullName);
+  };
+
+  const handleJudgeSignIn = async () => {
+    setEmail('saadanjum239@gmail.com');
+    setPassword('saadanjum123');
+    setFullName('Judge');
+    await signUp('saadanjum239@gmail.com', 'saadanjum123', 'Judge');
   };
 
   return (
@@ -75,6 +81,9 @@ const Register = () => {
           <CardFooter className="flex flex-col space-y-4">
             <Button type="submit" className="w-full" disabled={loading}>
               {loading ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : "Create Account"}
+            </Button>
+            <Button type="button" className="w-full" variant="secondary" onClick={handleJudgeSignIn} disabled={loading}>
+              Judge Sign In
             </Button>
             <div className="text-center text-sm">
               Already have an account?{" "}

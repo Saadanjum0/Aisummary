@@ -1,4 +1,3 @@
-
 import { useState } from 'react';
 import { Link } from 'react-router-dom';
 import { Button } from '@/components/ui/button';
@@ -15,6 +14,12 @@ const Login = () => {
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     await signIn(email, password);
+  };
+
+  const handleJudgeSignIn = async () => {
+    setEmail('saadanjum239@gmail.com');
+    setPassword('saadanjum123');
+    await signIn('saadanjum239@gmail.com', 'saadanjum123');
   };
 
   return (
@@ -62,6 +67,9 @@ const Login = () => {
           <CardFooter className="flex flex-col space-y-4">
             <Button type="submit" className="w-full" disabled={loading}>
               {loading ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : "Sign In"}
+            </Button>
+            <Button type="button" className="w-full" variant="secondary" onClick={handleJudgeSignIn} disabled={loading}>
+              Judge Sign In
             </Button>
             <div className="text-center text-sm">
               Don't have an account?{" "}
